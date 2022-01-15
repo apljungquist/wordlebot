@@ -68,7 +68,7 @@ def _choice(state, wordlist):
 
 class Guesser:
     def __init__(self, wordlist: list[str]) -> None:
-        self._wordlist = sorted(wordlist)
+        self._wordlist = sorted(wordlist, key=lambda w: (-len(set(w)), w))
 
     def __call__(self, state: str) -> str:
         return _choice(state, self._wordlist)
