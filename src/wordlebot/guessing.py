@@ -2,10 +2,12 @@ import atexit
 import collections
 import dataclasses
 import functools
+import operator
 import os
+from math import log
 
-import more_itertools
-
+# Using a precomputed first guess is relatively safe and provides a massive speedup.
+# Set this flag to redo that computation and exit.
 FIRST_GUESS_ONLY = os.environ.get("FIRST_GUESS_ONLY") == "1"
 ALPHABET = "abcdefghijklmnopqrstuvwxyz"
 
@@ -94,28 +96,83 @@ class Constraint:
         return True
 
 
-def _options(constraint, wordlist):
-    """Return (superset of) possible answers"""
-    # Superset because the information from the state may not be fully exploited
-    return (word for word in wordlist if constraint.permits(word))
+def _quick_score(secret, guess):
+    result = [None] * 5
+    remaining = list(secret)
+
+    for i, (s, g) in enumerate(zip(secret, guess)):
+        if s == g:
+            result[i] = 3
+            remaining[i] = None
+
+    for i, g in enumerate(guess):
+        if result[i]:
+            continue
+
+        if g in remaining:
+            result[i] = 2
+            remaining[remaining.index(g)] = None
+        else:
+            result[i] = 1
+
+    return tuple(result)
+
+
+def _entropy(options, guess):
+    """Return entropy of the score"""
+    counter = collections.Counter(_quick_score(secret, guess) for secret in options)
+    denominator = sum(counter.values())
+    return -sum(
+        numerator / denominator * log(numerator / denominator)
+        for numerator in counter.values()
+        if numerator
+    )
 
 
 @functools.cache
-def _choice(constraint, wordlist):
+def _options(constraint, wordlist):
+    """Return (superset of) possible answers"""
+    # Superset because the information from the state may not be fully exploited
+    return [word for word in wordlist if constraint.permits(word)]
+
+
+atexit.register(lambda: print(_options.__name__, _options.cache_info()))
+
+
+@functools.cache
+def _choice(constraint, words):
     """Return the word to try next
 
     Note that this need not be a possible answer.
     """
-    return more_itertools.first(_options(constraint, wordlist))
+    options = _options(constraint, words)
+    # If there are only three options left and we guess at random then we expect to use
+    # two more guesses. If we first guess a word that is impossible then we will need
+    # at least two guesses. As such, switching to choosing only from possible words
+    # will not hurt and may help.
+    if len(options) <= 3:
+        guesses = options
+    else:
+        guesses = words
 
-atexit.register(lambda :print(_choice.__name__, _choice.cache_info()))
+    entropies = {guess: _entropy(options, guess) for guess in guesses}
+
+    if FIRST_GUESS_ONLY:
+        print(max(entropies.items(), key=operator.itemgetter(1)))
+        exit()
+
+    return max(entropies, key=entropies.__getitem__)
+
+
+atexit.register(lambda: print(_choice.__name__, _choice.cache_info()))
+
 
 class Guesser:
     def __init__(self, wordlist: list[str]) -> None:
-        self._wordlist = tuple(sorted(wordlist, key=lambda w: (-len(set(w)), w)))
+        self._wordlist = frozenset(wordlist)
 
     def __call__(self, state: str) -> str:
-        if state == "-----:00000" and True:
+        if state == "-----:00000" and not FIRST_GUESS_ONLY:
             result = "tares"
         else:
             constraint = Constraint.new_from_state(state)
