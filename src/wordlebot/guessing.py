@@ -9,14 +9,18 @@ def _fmt_permitted(permitted):
     return "\n".join("".join(c if c in p else " " for c in ALPHABET) for p in permitted)
 
 
-def _is_option(word, permitted, required):
+def _is_option(word, permitted, lo, hi):
     for c, p in zip(word, permitted):
         if c not in p:
             return False
 
     counts = collections.Counter(word)
-    for c in required:
-        if counts[c] < required[c]:
+    for c, v in lo.items():
+        if counts[c] < v:
+            return False
+
+    for c, v in hi.items():
+        if v < counts[c]:
             return False
 
     return True
@@ -26,11 +30,12 @@ def _options(state, wordlist):
     """Return (superset of) possible answers"""
     # Superset because the information from the state may not be fully exploited
     permitted = [set(ALPHABET) for _ in range(5)]
-    required = collections.defaultdict(int)
+    lo = collections.defaultdict(lambda: 5)
+    hi = collections.defaultdict(lambda: 0)
     for guess, feedback in [step.split(":") for step in state.split(",")]:
-        marginal_required = collections.defaultdict(int)
+        feedback = [int(f) for f in feedback]
+        required = set()
         for i, (g, f) in enumerate(zip(guess, feedback)):
-            f = int(f)
             match f:
                 case 0:
                     assert g == "-"
@@ -38,23 +43,29 @@ def _options(state, wordlist):
                     permitted[i].discard(g)
                     # If a letter occurs multiple times in a guess but only once in the
                     # answer, only the first occurrence will be scored as a two.
-                    if g not in marginal_required:
+                    if g not in required:
                         for p in permitted:
                             p.discard(g)
                 case 2:
-                    marginal_required[g] += 1
+                    required.add(g)
                     permitted[i].discard(g)
                 case 3:
-                    marginal_required[g] += 1
+                    required.add(g)
                     permitted[i] = {g}
                 case _:
                     assert False
 
-        for k, v in marginal_required.items():
-            required[k] = max(required[k], v)
+        positive = collections.Counter(
+            g for g, f in zip(guess, feedback) if f in {2, 3}
+        )
+        negative = collections.Counter(g for g, f in zip(guess, feedback) if f in {1})
+        for k, v in positive.items():
+            hi[k] = max(hi[k], v)
+            if k in negative:
+                lo[k] = min(lo[k], v)
 
     for word in wordlist:
-        if _is_option(word, permitted, marginal_required):
+        if _is_option(word, permitted, hi, lo):
             yield word
 
 
