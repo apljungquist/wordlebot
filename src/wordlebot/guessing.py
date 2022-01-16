@@ -1,4 +1,5 @@
 import collections
+import functools
 
 import more_itertools
 
@@ -26,44 +27,59 @@ def _is_option(word, permitted, lo, hi):
     return True
 
 
+@functools.lru_cache(maxsize=10)
+def _constraints(state):
+    if len(state) == 1:
+        permitted = [set(ALPHABET) for _ in range(5)]
+        lo = collections.defaultdict(lambda: 5)
+        hi = collections.defaultdict(lambda: 0)
+    elif len(state) > 1:
+        permitted, lo, hi = _constraints(state[:-1])
+        permitted = [p.copy() for p in permitted]
+        lo = lo.copy()
+        hi = hi.copy()
+    else:
+        assert False
+
+    guess, feedback = state[-1]
+    feedback = [int(f) for f in feedback]
+    required = set()
+    for i, (g, f) in enumerate(zip(guess, feedback)):
+        match f:
+            case 0:
+                assert g == "-"
+            case 1:
+                permitted[i].discard(g)
+                # If a letter occurs multiple times in a guess but only once in the
+                # answer, only the first occurrence will be scored as a two.
+                if g not in required:
+                    for p in permitted:
+                        p.discard(g)
+            case 2:
+                required.add(g)
+                permitted[i].discard(g)
+            case 3:
+                required.add(g)
+                permitted[i] = {g}
+            case _:
+                assert False
+
+    positive = collections.Counter(g for g, f in zip(guess, feedback) if f in {2, 3})
+    negative = collections.Counter(g for g, f in zip(guess, feedback) if f in {1})
+    for k, v in positive.items():
+        hi[k] = max(hi[k], v)
+        if k in negative:
+            lo[k] = min(lo[k], v)
+
+    return permitted, lo, hi
+
+
 def _options(state, wordlist):
     """Return (superset of) possible answers"""
     # Superset because the information from the state may not be fully exploited
-    permitted = [set(ALPHABET) for _ in range(5)]
-    lo = collections.defaultdict(lambda: 5)
-    hi = collections.defaultdict(lambda: 0)
-    for guess, feedback in [step.split(":") for step in state.split(",")]:
-        feedback = [int(f) for f in feedback]
-        required = set()
-        for i, (g, f) in enumerate(zip(guess, feedback)):
-            match f:
-                case 0:
-                    assert g == "-"
-                case 1:
-                    permitted[i].discard(g)
-                    # If a letter occurs multiple times in a guess but only once in the
-                    # answer, only the first occurrence will be scored as a two.
-                    if g not in required:
-                        for p in permitted:
-                            p.discard(g)
-                case 2:
-                    required.add(g)
-                    permitted[i].discard(g)
-                case 3:
-                    required.add(g)
-                    permitted[i] = {g}
-                case _:
-                    assert False
-
-        positive = collections.Counter(
-            g for g, f in zip(guess, feedback) if f in {2, 3}
-        )
-        negative = collections.Counter(g for g, f in zip(guess, feedback) if f in {1})
-        for k, v in positive.items():
-            hi[k] = max(hi[k], v)
-            if k in negative:
-                lo[k] = min(lo[k], v)
-
+    permitted, lo, hi = _constraints(
+        tuple(tuple(step.split(":")) for step in state.split(","))
+    )
     for word in wordlist:
         if _is_option(word, permitted, hi, lo):
             yield word
