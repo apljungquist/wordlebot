@@ -148,8 +148,8 @@ def _choice(constraint, words):
     options = _options(constraint, words)
     # If there are only three options left and we guess at random then we expect to use
     # two more guesses. If we first guess a word that is impossible then we will need
-    # at least two guesses. As such, switching to choosing only from possible words
-    # will not hurt and may help.
+    # at least two guesses. As such, switching to choosing only from plausible answers
+    # will not hurt.
     if len(options) <= 3:
         guesses = options
     else:
@@ -161,7 +161,9 @@ def _choice(constraint, words):
         print(max(entropies.items(), key=operator.itemgetter(1)))
         exit()
 
-    return max(entropies, key=entropies.__getitem__)
+    # Ordered collection before this point for reproducibility
+    options = set(options)
+    return max(entropies, key=lambda k: (entropies[k], k in options))
 
 
 atexit.register(lambda: print(_choice.__name__, _choice.cache_info()))
@@ -169,7 +171,7 @@ atexit.register(lambda: print(_choice.__name__, _choice.cache_info()))
 
 class Guesser:
     def __init__(self, wordlist: list[str]) -> None:
-        self._wordlist = frozenset(wordlist)
+        self._wordlist = tuple(wordlist)
 
     def __call__(self, state: str) -> str:
         if state == "-----:00000" and not FIRST_GUESS_ONLY:
