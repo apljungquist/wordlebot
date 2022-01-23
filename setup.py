@@ -9,7 +9,7 @@ setuptools.setup(
     package_dir={"": "src"},
     entry_points={
         "botfights.wordle.guesser": [
-            "wordlebot = wordlebot.guessing:Guesser",
+            "max_entropy = wordlebot.guessing:MaxEntropyGuesser",
         ],
     },
 )

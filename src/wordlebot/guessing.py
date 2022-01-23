@@ -2,13 +2,8 @@ import atexit
 import collections
 import dataclasses
 import functools
-import operator
-import os
 from math import log
 
-# Using a precomputed first guess is relatively safe and provides a massive speedup.
-# Set this flag to redo that computation and exit.
-FIRST_GUESS_ONLY = os.environ.get("FIRST_GUESS_ONLY") == "1"
 ALPHABET = "abcdefghijklmnopqrstuvwxyz"
 
 
@@ -140,43 +135,39 @@ atexit.register(lambda: print(_options.__name__, _options.cache_info()))
 
 
 @functools.cache
-def _choice(constraint, words):
+def _choice(constraint, allowed_guesses, allowed_answers):
     """Return the word to try next
 
     Note that this need not be a possible answer.
     """
-    options = _options(constraint, words)
+    plausible_answers = _options(constraint, allowed_answers)
     # If there are only three options left and we guess at random then we expect to use
     # two more guesses. If we first guess a word that is impossible then we will need
     # at least two guesses. As such, switching to choosing only from plausible answers
     # will not hurt.
-    if len(options) <= 3:
-        guesses = options
+    if len(plausible_answers) <= 3:
+        plausible_guesses = plausible_answers
     else:
-        guesses = words
+        plausible_guesses = allowed_guesses
 
-    entropies = {guess: _entropy(options, guess) for guess in guesses}
-
-    if FIRST_GUESS_ONLY:
-        print(max(entropies.items(), key=operator.itemgetter(1)))
-        exit()
+    entropies = {
+        guess: _entropy(plausible_answers, guess) for guess in plausible_guesses
+    }
 
     # Ordered collection before this point for reproducibility
-    options = set(options)
-    return max(entropies, key=lambda k: (entropies[k], k in options))
+    plausible_answers = set(plausible_answers)
+    return max(entropies, key=lambda k: (entropies[k], k in plausible_answers))
 
 
 atexit.register(lambda: print(_choice.__name__, _choice.cache_info()))
 
 
-class Guesser:
-    def __init__(self, wordlist: list[str]) -> None:
-        self._wordlist = tuple(wordlist)
+class MaxEntropyGuesser:
+    def __init__(self, wordlist: dict[str, bool]) -> None:
+        self._guesses = tuple(sorted(wordlist))
+        self._answers = tuple(sorted(k for k, v in wordlist.items() if v))
 
     def __call__(self, state: str) -> str:
-        if state == "-----:00000" and not FIRST_GUESS_ONLY:
-            result = "tares"
-        else:
-            constraint = Constraint.new_from_state(state)
-            result = _choice(constraint, self._wordlist)
+        constraint = Constraint.new_from_state(state)
+        result = _choice(constraint, self._guesses, self._answers)
         return result
