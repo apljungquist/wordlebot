@@ -124,6 +124,14 @@ def _entropy(options, guess):
     )
 
 
+def _min_surprise(options, guess):
+    """Return entropy of the score"""
+    counter = collections.Counter(_quick_score(secret, guess) for secret in options)
+    numerator = max(counter.values())
+    denominator = sum(counter.values())
+    return log(denominator / numerator)
+
+
 @functools.cache
 def _options(constraint, wordlist):
     """Return (superset of) possible answers"""
@@ -135,7 +143,7 @@ atexit.register(lambda: print(_options.__name__, _options.cache_info()))
 
 
 @functools.cache
-def _choice(constraint, allowed_guesses, allowed_answers):
+def _choice(constraint, allowed_guesses, allowed_answers, adversarial):
     """Return the word to try next
 
     Note that this need not be a possible answer.
@@ -150,24 +158,35 @@ def _choice(constraint, allowed_guesses, allowed_answers):
     else:
         plausible_guesses = allowed_guesses
 
-    entropies = {
-        guess: _entropy(plausible_answers, guess) for guess in plausible_guesses
-    }
+    if adversarial:
+        rating = _min_surprise
+    else:
+        rating = _entropy
+
+    ratings = {guess: rating(plausible_answers, guess) for guess in plausible_guesses}
 
     # Ordered collection before this point for reproducibility
     plausible_answers = set(plausible_answers)
-    return max(entropies, key=lambda k: (entropies[k], k in plausible_answers))
+    return max(ratings, key=lambda k: (ratings[k], k in plausible_answers))
 
 
 atexit.register(lambda: print(_choice.__name__, _choice.cache_info()))
 
 
-class MaxEntropyGuesser:
+class BaseGuesser:
     def __init__(self, wordlist: dict[str, bool]) -> None:
         self._guesses = tuple(sorted(wordlist))
         self._answers = tuple(sorted(k for k, v in wordlist.items() if v))
 
+
+class MaxEntropyGuesser(BaseGuesser):
     def __call__(self, state: str) -> str:
         constraint = Constraint.new_from_state(state)
-        result = _choice(constraint, self._guesses, self._answers)
+        result = _choice(constraint, self._guesses, self._answers, False)
         return result
+
+
+class MaximinSurpriseGuesser(BaseGuesser):
+    def __call__(self, state: str) -> str:
+        constraint = Constraint.new_from_state(state)
+        return _choice(constraint, self._guesses, self._answers, True)

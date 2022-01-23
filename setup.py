@@ -10,6 +10,7 @@ setuptools.setup(
     entry_points={
         "botfights.wordle.guesser": [
             "max_entropy = wordlebot.guessing:MaxEntropyGuesser",
+            "maximin_surprise = wordlebot.guessing:MaximinSurpriseGuesser",
         ],
     },
 )
