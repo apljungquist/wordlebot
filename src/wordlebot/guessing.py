@@ -4,6 +4,8 @@ import dataclasses
 import functools
 from math import log
 
+import more_itertools
+
 ALPHABET = "abcdefghijklmnopqrstuvwxyz"
 
 
@@ -173,20 +175,31 @@ def _choice(constraint, allowed_guesses, allowed_answers, adversarial):
 atexit.register(lambda: print(_choice.__name__, _choice.cache_info()))
 
 
-class BaseGuesser:
+class SimpleGuesser:
     def __init__(self, wordlist: dict[str, bool]) -> None:
         self._guesses = tuple(sorted(wordlist))
         self._answers = tuple(sorted(k for k, v in wordlist.items() if v))
 
+    def __call__(self, state: str) -> str:
+        constraint = Constraint.new_from_state(state)
+        return more_itertools.first_true(self._answers, pred=constraint.permits)
 
-class MaxEntropyGuesser(BaseGuesser):
+
+class MaxEntropyGuesser(SimpleGuesser):
     def __call__(self, state: str) -> str:
         constraint = Constraint.new_from_state(state)
         result = _choice(constraint, self._guesses, self._answers, False)
         return result
 
 
-class MaximinSurpriseGuesser(BaseGuesser):
+class MaximinSurpriseGuesser(SimpleGuesser):
     def __call__(self, state: str) -> str:
         constraint = Constraint.new_from_state(state)
         return _choice(constraint, self._guesses, self._answers, True)
+
+
+class CheapHeuristicGuesser(SimpleGuesser):
+    # cheap here means it can be precomputed
+    def __init__(self, wordlist: dict[str, bool]) -> None:
+        super().__init__(wordlist)
+        self._answers = sorted(self._answers, key=lambda g: len(set(g)), reverse=True)

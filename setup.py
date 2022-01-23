@@ -11,6 +11,8 @@ setuptools.setup(
         "botfights.wordle.guesser": [
             "max_entropy = wordlebot.guessing:MaxEntropyGuesser",
             "maximin_surprise = wordlebot.guessing:MaximinSurpriseGuesser",
+            "cheap_heuristic = wordlebot.guessing:CheapHeuristicGuesser",
+            "simple = wordlebot.guessing:SimpleGuesser",
         ],
     },
 )
