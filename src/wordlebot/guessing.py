@@ -2,9 +2,12 @@ import atexit
 import collections
 import dataclasses
 import functools
+import operator
+import time
 from math import log
 
 import more_itertools
+from botfights import load_wordlist
 
 ALPHABET = "abcdefghijklmnopqrstuvwxyz"
 
@@ -203,3 +206,155 @@ class CheapHeuristicGuesser(SimpleGuesser):
     def __init__(self, wordlist: dict[str, bool]) -> None:
         super().__init__(wordlist)
         self._answers = sorted(self._answers, key=lambda g: len(set(g)), reverse=True)
+
+
+def _play(bot, answer):
+    state = "-----:00000"
+    guess = None
+    i = 10
+    while guess != answer:
+        guess = bot(state)
+        state += f",{guess}:{''.join(map(str, _quick_score(answer, guess)))}"
+        i -= 1
+        if not i:
+            raise Exception
+    return state.split(",", maxsplit=1)[1]
+
+
+def _histogram(bot, answers):
+    return dict(
+        sorted(
+            collections.Counter(
+                _play(bot, answer).count(",") + 1 for answer in answers
+            ).items(),
+            key=operator.itemgetter(1),
+        )
+    )
+
+
+def args_cache(func):
+    func.cache = {}
+    func.cache_hits = 0
+
+    @functools.wraps(func)
+    def wrapped(*args, **kwargs):
+        if args in func.cache:
+            func.cache_hits += 1
+            return func.cache[args]
+        result = func(*args, **kwargs)
+        func.cache[args] = result
+        return result
+
+    atexit.register(
+        lambda: print(
+            func.__qualname__, "Hits:", func.cache_hits, "Misses:", len(func.cache)
+        )
+    )
+    return wrapped
+
+
+def cache(func):
+    result = functools.cache(func)
+    atexit.register(lambda: print(func.__qualname__, result.cache_info()))
+    return result
+
+
+class NoSolutionError(Exception):
+    pass
+
+
+class StrategicGuesser:
+    def __init__(self, wordlist: dict[str, bool], beam_width, max_depth) -> None:
+        self.guesses = tuple(sorted(wordlist))
+        self.answers = tuple(sorted(k for k, v in wordlist.items() if v))
+        self.beam_width = beam_width
+        self.max_depth = max_depth
+
+    @args_cache
+    def _guess(self, clues, *, plausible_answers):
+        used = {clue[0] for clue in clues}
+        beam = sorted(
+            [guess for guess in self.guesses if guess not in used],
+            key=lambda guess: (
+                _entropy(plausible_answers, guess),
+                guess in plausible_answers,
+            ),
+            reverse=True,
+        )[: self.beam_width]
+
+        max_cost = self.max_depth * len(self.answers)
+        min_cost = len(clues) + 1
+
+        best_cost = max_cost
+        best_guess = None
+        for guess in beam:
+            try:
+                cost = self._cost(clues, guess, old_plausible_answers=plausible_answers)
+            except NoSolutionError:
+                continue
+
+            # Cannot do any better so why try.
+            # I think this happens iff the guess is correct.
+            # 25x speedup.
+            if cost == min_cost:
+                return cost, guess
+
+            if cost < best_cost:
+                best_cost = cost
+                best_guess = guess
+
+        if best_guess is None:
+            raise NoSolutionError
+
+        return best_cost, best_guess
+
+    def _cost(self, clues, guess, *, old_plausible_answers):
+        depth = len(clues) + 1
+        if self.max_depth < depth:
+            raise NoSolutionError
+
+        scores = more_itertools.map_reduce(
+            old_plausible_answers,
+            keyfunc=lambda answer: _quick_score(answer, guess),
+        )
+        costs = []
+        for i, (score, new_plausible_answers) in enumerate(scores.items()):
+            if score == (3,) * 5:
+                cost = depth
+            else:
+                cost, _ = self._guess(
+                    clues | {(guess, score)}, plausible_answers=new_plausible_answers
+                )
+            costs.append(cost)
+
+        return sum(costs)
+
+    @cache
+    def __call__(self, state):
+        constraint = Constraint.new_from_state(state)
+        _, guess = self._guess(
+            frozenset(
+                tuple(part.split(":")) for part in state.split(",") if part[0] != "-"
+            ),
+            plausible_answers=[
+                answer for answer in self.answers if constraint.permits(answer)
+            ],
+        )
+        return guess
+
+
+def main():
+    words = load_wordlist("bot", 0.5 ** 8)
+    bots = [
+        MaxEntropyGuesser(words),
+        StrategicGuesser(words, 5, 7),
+    ]
+    for bot in bots:
+        t = time.perf_counter()
+        result = _histogram(bot, [k for k, v in words.items() if v])
+        d = time.perf_counter() - t
+        print(sum(k * v for k, v in result.items()), dict(sorted(result.items())), d)
+
+
+if __name__ == "__main__":
+    main()
